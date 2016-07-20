@@ -1316,8 +1316,8 @@ static void set_default_clang_options(C, bool CCompiler, const char *Triple, con
         Cxx->CI->getLangOpts().CPlusPlus = 1;
         Cxx->CI->getLangOpts().CPlusPlus11 = 1;
         Cxx->CI->getLangOpts().CPlusPlus14 = 1;
-        Cxx->CI->getLangOpts().RTTI = 0;
-        Cxx->CI->getLangOpts().RTTIData = 0;
+        Cxx->CI->getLangOpts().RTTI = 1;
+        Cxx->CI->getLangOpts().RTTIData = 1;
         Cxx->CI->getLangOpts().Exceptions = 1;          // exception handling
         Cxx->CI->getLangOpts().ObjCExceptions = 1;  //  Objective-C exceptions
         Cxx->CI->getLangOpts().CXXExceptions = 1;   // C++ exceptions
