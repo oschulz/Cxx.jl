@@ -1,3 +1,4 @@
+#define JL_DLLEXPORT
 #undef B0 //rom termios
 #define __STDC_LIMIT_MACROS
 #define __STDC_CONSTANT_MACROS
