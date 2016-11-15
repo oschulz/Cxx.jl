@@ -1,4 +1,5 @@
 import Base: String, unsafe_string
+using Base.@propagate_inbounds
 
 cxxparse("""
 #include <string>
@@ -35,11 +36,25 @@ end
 Base.start(it::StdVector) = 0
 Base.next(it::StdVector,i) = (it[i], i+1)
 Base.done(it::StdVector,i) = i >= length(it)
-Base.getindex(it::StdVector,i) = icxx"($(it))[$i];"
-Base.length(it::StdVector) = icxx"$(it).size();"
+Base.length(it::StdVector) = Int(icxx"$(it).size();")
+Base.linearindices(it::StdVector) = 0:(length(it) - 1)
+Base.checkbounds(v::StdVector, i) = (0 <= i < length(v)) || Base.throw_boundserror(v, i)
+
+@inline Base.getindex(it::StdVector,i) = (@boundscheck checkbounds(it, i); icxx"($(it))[$i];")
+@inline Base.getindex{T<:Cxx.CxxBuiltinTs}(it::StdVector{T}, i) = (@boundscheck checkbounds(it, i); icxx"auto x = ($(it))[$i]; x;")
+
+@inline function _std_setindex!(it::StdVector, val, i)
+    @boundscheck checkbounds(it, i)
+    icxx"($(it))[$i] = $val; void();"
+end
+@propagate_inbounds Base.setindex!{T}(it::StdVector{T}, val::T, i) = _std_setindex!(it, val, i)
+@propagate_inbounds Base.setindex!{T}(it::StdVector{T}, val::Cxx.CppValue{T}, i) = _std_setindex!(it, val, i)
+@propagate_inbounds Base.setindex!{T}(it::StdVector{T}, val, i) = _std_setindex!(it, convert(T, val), i)
+
 Base.deleteat!(v::StdVector,idxs::UnitRange) =
     icxx"$(v).erase($(v).begin()+$(first(idxs)),$(v).begin()+$(last(idxs)));"
 Base.push!(v::StdVector,i) = icxx"$v.push_back($i);"
+Base.resize!(v::StdVector, n) = icxx"$v.resize($n);"
 
 Base.start(map::StdMap) = icxx"$map.begin();"
 function Base.next(map::StdMap,i)
@@ -63,6 +78,47 @@ function Base.filter!(f, a::StdVector)
         deleteat!(a, insrt:length(a))
     end
     return a
+end
+
+# Generic copy from iterable collection to StdVector. Reverse direction is
+# already covered by Julia's default copy!(dest::AbstractArray, src).
+function Base.copy!(dest::StdVector, src)
+    destiter = linearindices(dest)
+    state = start(destiter)
+    for x in src
+        i, state = next(destiter, state)
+        dest[i] = x
+    end
+    return dest
+end
+
+function Base.copy!{T<:Cxx.CxxBuiltinTs}(dest::DenseVector{T}, src::StdVector{T})
+    dest_length = length(linearindices(dest))
+    src_length = length(linearindices(src))
+    (dest_length < src_length) && throw(BoundsError())
+    unsafe_copy!(pointer(dest), (@cxx src->data()), src_length)
+    dest
+end
+
+function Base.copy!{T<:Cxx.CxxBuiltinTs}(dest::StdVector{T}, src::DenseVector{T})
+    dest_length = length(linearindices(dest))
+    src_length = length(linearindices(src))
+    (dest_length < src_length) && throw(BoundsError())
+    unsafe_copy!((@cxx dest->data()), pointer(src), src_length)
+    dest
+end
+
+function Base.convert{T}(V::Type{Vector{T}}, x::StdVector)
+    result = V(length(x))
+    copy!(result, x)
+    result
+end
+
+function Base.convert{T}(::Type{cxxt"std::vector<$T>"}, x::AbstractVector)
+    n = length(linearindices(x))
+    result = icxx"std::vector<$T> v($n); v;"
+    copy!(result, x)
+    result
 end
 
 function Base.show{T}(io::IO,
