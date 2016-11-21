@@ -39,8 +39,12 @@ Base.start(v::StdVector) = 0
 Base.next(v::StdVector,i) = (v[i], i+1)
 Base.done(v::StdVector,i) = i >= length(v)
 Base.length(v::StdVector) = Int(icxx"$(v).size();")
-Base.linearindices(v::StdVector) = 0:(length(v) - 1)
-Base.checkbounds(v::StdVector, i) = (0 <= i < length(v)) || Base.throw_boundserror(v, i)
+@inline Base.indices(v::StdVector) = (0:(length(v) - 1),)
+@inline Base.linearindices(v::StdVector) = indices(v)[1]
+@inline function Base.checkbounds(v::StdVector, I...)
+    Base.checkbounds_indices(Bool, indices(v), I) || Base.throw_boundserror(v, I)
+    nothing
+end
 
 @inline Base.getindex(v::StdVector,i) = (@boundscheck checkbounds(v, i); icxx"($(v))[$i];")
 @inline Base.getindex{T<:Cxx.CxxBuiltinTs}(v::StdVector{T}, i) = (@boundscheck checkbounds(v, i); icxx"auto x = ($(v))[$i]; x;")
