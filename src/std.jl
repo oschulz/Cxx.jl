@@ -35,23 +35,23 @@ end
     end
 end
 
-Base.start(it::StdVector) = 0
-Base.next(it::StdVector,i) = (it[i], i+1)
-Base.done(it::StdVector,i) = i >= length(it)
-Base.length(it::StdVector) = Int(icxx"$(it).size();")
-Base.linearindices(it::StdVector) = 0:(length(it) - 1)
+Base.start(v::StdVector) = 0
+Base.next(v::StdVector,i) = (v[i], i+1)
+Base.done(v::StdVector,i) = i >= length(v)
+Base.length(v::StdVector) = Int(icxx"$(v).size();")
+Base.linearindices(v::StdVector) = 0:(length(v) - 1)
 Base.checkbounds(v::StdVector, i) = (0 <= i < length(v)) || Base.throw_boundserror(v, i)
 
-@inline Base.getindex(it::StdVector,i) = (@boundscheck checkbounds(it, i); icxx"($(it))[$i];")
-@inline Base.getindex{T<:Cxx.CxxBuiltinTs}(it::StdVector{T}, i) = (@boundscheck checkbounds(it, i); icxx"auto x = ($(it))[$i]; x;")
+@inline Base.getindex(v::StdVector,i) = (@boundscheck checkbounds(v, i); icxx"($(v))[$i];")
+@inline Base.getindex{T<:Cxx.CxxBuiltinTs}(v::StdVector{T}, i) = (@boundscheck checkbounds(v, i); icxx"auto x = ($(v))[$i]; x;")
 
-@inline function _std_setindex!(it::StdVector, val, i)
-    @boundscheck checkbounds(it, i)
-    icxx"($(it))[$i] = $val; void();"
+@inline function _std_setindex!(v::StdVector, val, i)
+    @boundscheck checkbounds(v, i)
+    icxx"($(v))[$i] = $val; void();"
 end
-@propagate_inbounds Base.setindex!{T}(it::StdVector{T}, val::T, i) = _std_setindex!(it, val, i)
-@propagate_inbounds Base.setindex!{T}(it::StdVector{T}, val::Cxx.CppValue{T}, i) = _std_setindex!(it, val, i)
-@propagate_inbounds Base.setindex!{T}(it::StdVector{T}, val, i) = _std_setindex!(it, convert(T, val), i)
+@propagate_inbounds Base.setindex!{T}(v::StdVector{T}, val::T, i) = _std_setindex!(v, val, i)
+@propagate_inbounds Base.setindex!{T}(v::StdVector{T}, val::Cxx.CppValue{T}, i) = _std_setindex!(v, val, i)
+@propagate_inbounds Base.setindex!{T}(v::StdVector{T}, val, i) = _std_setindex!(v, convert(T, val), i)
 
 Base.deleteat!(v::StdVector,idxs::UnitRange) =
     icxx"$(v).erase($(v).begin()+$(first(idxs)),$(v).begin()+$(last(idxs)));"
