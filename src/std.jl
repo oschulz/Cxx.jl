@@ -72,6 +72,9 @@ Base.done(map::StdMap,i) = icxx"$i == $map.end();"
 Base.length(map::StdMap) = icxx"$map.size();"
 Base.eltype{K,V}(::Type{StdMap{K,V}}) = Pair{K,V}
 
+Base.pointer(v::StdVector, i::Integer) = icxx"&$v[$i];"
+Base.pointer(v::StdVector) = pointer(v, 0)
+
 function Base.filter!(f, a::StdVector)
     insrt = start(a)
     for curr = start(a):length(a)
@@ -98,37 +101,35 @@ function Base.copy!(dest::StdVector, src)
     return dest
 end
 
-function _check_copy_len(dest, doffs, src, soffs, n)
-    n < 0 && throw(ArgumentError(string("tried to copy n=", n, " elements, but n must be >= 0")))
-
+function _check_copy_len(dest, doffs::Integer, src, soffs::Integer, n::Integer)
+    n > 0 || throw(ArgumentError(string("tried to copy n=", n, " elements, but n should be nonnegative")))
     dest_linidx = linearindices(dest)
     src_linidx = linearindices(src)
-
     (
         soffs < first(src_linidx) || doffs < first(dest_linidx) ||
             soffs + n - 1 > last(src_linidx) || doffs + n - 1 > last(dest_linidx)
     ) && throw(BoundsError())
-
-    n
+    nothing
 end
 
-function Base.copy!{T<:Cxx.CxxBuiltinTs,N}(dest::DenseArray{T,N}, doffs::Integer, src::StdVector{T}, soffs::Integer, n::Integer)
+function _dense_unsafe_copy!(dest, doffs::Integer, src, soffs::Integer, n::Integer)
+    n == 0 && return dest
     _check_copy_len(dest, doffs, src, soffs, n)
-    unsafe_copy!(pointer(dest, doffs), icxx"&$src[$soffs];", n)
+    unsafe_copy!(pointer(dest, doffs), pointer(src, soffs), n)
     dest
 end
 
-function Base.copy!{T<:Cxx.CxxBuiltinTs,N}(dest::StdVector{T}, doffs::Integer, src::DenseArray{T,N}, soffs::Integer, n::Integer)
-    _check_copy_len(dest, doffs, src, soffs, n)
-    unsafe_copy!(icxx"&$dest[$doffs];", pointer(src, soffs), n)
-    dest
-end
+Base.copy!{T<:Cxx.CxxBuiltinTs,N}(dest::DenseArray{T,N}, doffs::Integer, src::StdVector{T}, soffs::Integer, n::Integer) =
+    _dense_unsafe_copy!(dest, doffs, src, soffs, n)
+
+Base.copy!{T<:Cxx.CxxBuiltinTs,N}(dest::StdVector{T}, doffs::Integer, src::DenseArray{T,N}, soffs::Integer, n::Integer) =
+    _dense_unsafe_copy!(dest, doffs, src, soffs, n)
 
 Base.copy!{T<:Cxx.CxxBuiltinTs,N}(dest::DenseArray{T,N}, src::StdVector{T}) =
-    copy!(dest, first(linearindices(dest)), src, 0, length(src))
+    _dense_unsafe_copy!(dest, first(linearindices(dest)), src, 0, length(src))
 
 Base.copy!{T<:Cxx.CxxBuiltinTs,N}(dest::StdVector{T}, src::DenseArray{T,N}) =
-    copy!(dest, 0, src, first(linearindices(src)), length(src))
+    _dense_unsafe_copy!(dest, 0, src, first(linearindices(src)), length(src))
 
 function Base.convert{T}(V::Type{Vector{T}}, x::StdVector)
     result = V(length(x))
