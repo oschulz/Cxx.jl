@@ -39,6 +39,7 @@ Base.start(v::StdVector) = 0
 Base.next(v::StdVector,i) = (v[i], i+1)
 Base.done(v::StdVector,i) = i >= length(v)
 Base.length(v::StdVector) = Int(icxx"$(v).size();")
+Base.size(v::StdVector) = (length(v),)
 @inline Base.indices(v::StdVector) = (0:(length(v) - 1),)
 @inline Base.linearindices(v::StdVector) = indices(v)[1]
 @inline function Base.checkbounds(v::StdVector, I...)
@@ -89,17 +90,33 @@ function Base.filter!(f, a::StdVector)
     return a
 end
 
+
+immutable WrappedStdVector{T,W} <: DenseArray{T,1}
+    v::W
+end
+WrappedStdVector{T}(v::StdVector{T}) = WrappedStdVector{T, typeof(v)}(v)
+
+@inline Base.length(A::WrappedStdVector) = length(A.v)
+@inline Base.size(A::WrappedStdVector) = size(A.v)
+@inline Base.linearindexing(::WrappedStdVector) = Base.LinearFast()
+@inline Base.getindex(A::WrappedStdVector, i::Integer) = getindex(A.v, i - 1)
+@inline Base.setindex!(A::WrappedStdVector, val, i::Integer) = setindex!(A.v, val, i - 1)
+
+Base.unsafe_wrap{T}(::Type{Array}, v::StdVector{T}) = WrappedStdVector(v)
+Base.unsafe_wrap{T<:Cxx.CxxBuiltinTs}(::Type{Array}, v::StdVector{T}) = unsafe_wrap(Array, pointer(v), length(v), false)
+
 # Generic copy from iterable collection to StdVector. Reverse direction is
 # already covered by Julia's default copy!(dest::AbstractArray, src).
-function Base.copy!(dest::StdVector, src)
-    destiter = linearindices(dest)
-    state = start(destiter)
-    for x in src
-        i, state = next(destiter, state)
-        dest[i] = x
-    end
-    return dest
-end
+Base.copy!(dest::StdVector, src) = copy!(unsafe_wrap(Array, dest), src)
+Base.copy!(dest, src::StdVector) = copy!(dest, unsafe_wrap(Array, src))
+# Base.copy!(dest::StdVector, src::StdVector) = ...
+
+Base.copy!(dest::StdVector, doffs::Integer, src, soffs::Integer, n::Integer) =
+    copy!(unsafe_wrap(Array, dest), doffs + 1, src, soffs, n)
+
+Base.copy!(dest::StdVector, doffs::Integer, src, soffs::Integer, n::Integer) =
+    copy!(unsafe_wrap(Array, dest), doffs + 1, src, soffs, n)
+
 
 function _check_copy_len(dest, doffs::Integer, src, soffs::Integer, n::Integer)
     n > 0 || throw(ArgumentError(string("tried to copy n=", n, " elements, but n should be nonnegative")))
@@ -130,6 +147,7 @@ Base.copy!{T<:Cxx.CxxBuiltinTs,N}(dest::DenseArray{T,N}, src::StdVector{T}) =
 
 Base.copy!{T<:Cxx.CxxBuiltinTs,N}(dest::StdVector{T}, src::DenseArray{T,N}) =
     _dense_unsafe_copy!(dest, 0, src, first(linearindices(src)), length(src))
+
 
 function Base.convert{T}(V::Type{Vector{T}}, x::StdVector)
     result = V(length(x))
