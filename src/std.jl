@@ -40,6 +40,7 @@ Base.next(v::StdVector,i) = (v[i], i+1)
 Base.done(v::StdVector,i) = i >= length(v)
 Base.length(v::StdVector) = Int(icxx"$(v).size();")
 Base.size(v::StdVector) = (length(v),)
+Base.eltype{T}(v::StdVector{T}) = T
 @inline Base.indices(v::StdVector) = (0:(length(v) - 1),)
 @inline Base.linearindices(v::StdVector) = indices(v)[1]
 @inline function Base.checkbounds(v::StdVector, I...)
@@ -104,6 +105,15 @@ Base.copy!(dest::AbstractArray, doffs::Integer, src::StdVector, soffs::Integer, 
     copy!(dest, doffs + 1, unsafe_wrap(DenseArray, src), soffs, n)
 # Base.copy!(dest::StdVector, doffs::Integer, src::StdVector, soffs::Integer, n::Integer) = ...
 
+Base.convert{CT<:AbstractArray}(::Type{CT}, v::StdVector) = convert(CT, unsafe_wrap(DenseArray, v))
+
+function Base.convert{T}(::Type{cxxt"std::vector<$T>"}, x::AbstractArray)
+    n = length(linearindices(x))
+    result = icxx"std::vector<$T> v($n); v;"
+    copy!(result, x)
+    result
+end
+
 
 immutable WrappedCppObjArray{T, CVR} <: DenseArray{T,1}
     ptr::Cxx.CppPtr{T,CVR}
@@ -141,19 +151,6 @@ Base.pointer{T}(A::WrappedCppObjArray{T}, i::Integer) = icxx"&$(A.ptr)[$(i - 1)]
 @propagate_inbounds Base.setindex!{T<:Cxx.CxxBuiltinTs}(A::WrappedCppPrimArray{T}, val::T, i::Integer) = _generic_setindex!(A, val, i)
 @propagate_inbounds Base.setindex!{T}(A::WrappedArray{T}, val, i::Integer) = _generic_setindex!(A, convert(T, val), i)
 
-
-function Base.convert{T}(V::Type{Vector{T}}, x::StdVector)
-    result = V(length(x))
-    copy!(result, x)
-    result
-end
-
-function Base.convert{T}(::Type{cxxt"std::vector<$T>"}, x::AbstractVector)
-    n = length(linearindices(x))
-    result = icxx"std::vector<$T> v($n); v;"
-    copy!(result, x)
-    result
-end
 
 function Base.show{T}(io::IO,
     ptr::Union{cxxt"std::shared_ptr<$T>",cxxt"std::shared_ptr<$T>&"})
