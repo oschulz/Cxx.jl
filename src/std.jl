@@ -90,19 +90,39 @@ function Base.filter!(f, a::StdVector)
     return a
 end
 
+#=
 
-immutable WrappedStdVector{T,W} <: DenseArray{T,1}
-    v::W
+immutable WrappedCppObjArray{T, CVR} <: DenseArray{T,1}
+    ptr::CppPtr{T,CVR}
+    len::Int
 end
-WrappedStdVector{T}(v::StdVector{T}) = WrappedStdVector{T, typeof(v)}(v)
 
-@inline Base.length(A::WrappedStdVector) = length(A.v)
-@inline Base.size(A::WrappedStdVector) = size(A.v)
-@inline Base.linearindexing(::WrappedStdVector) = Base.LinearFast()
-@inline Base.getindex(A::WrappedStdVector, i::Integer) = getindex(A.v, i - 1)
-@inline Base.setindex!(A::WrappedStdVector, val, i::Integer) = setindex!(A.v, val, i - 1)
+immutable WrappedCppPrimArray{T<:Cxx.CxxBuiltinTs} <: DenseArray{T,1}
+    ptr::Ptr{T}
+    len::Int
+end
 
-Base.unsafe_wrap{T}(::Type{Array}, v::StdVector{T}) = WrappedStdVector(v)
+typealias WrappedArray{T} Union{WrappedCppObjArray{T}, WrappedCppPrimArray{T}}
+
+Base.unsafe_wrap{T}(::Type{DenseArray}, v::StdVector{T}) = WrappedCppObjArray(pointer(v), length(v))
+Base.unsafe_wrap{T<:Cxx.CxxBuiltinTs}(::Type{DenseArray}, v::StdVector{T}) = WrappedCppPrimArray(pointer(v), length(v))
+Base.unsafe_wrap{T<:Cxx.CxxBuiltinTs}(::Type{Array}, v::StdVector{T}) = unsafe_wrap(Array, pointer(v), length(v), false)
+
+@inline Base.length(A::WrappedArray) = length(A.len)
+@inline Base.size(A::WrappedArray) = (A.len,)
+@inline Base.linearindexing(::WrappedArray) = Base.LinearFast()
+
+@inline Base.getindex(A::WrappedCppObjArray,i) = (@boundscheck checkbounds(v, i); icxx"($(A.ptr))[$(i - 1)];")
+
+@inline function _std_setindex!(v::{StdVector, val, i)
+    @boundscheck checkbounds(v, i)
+    icxx"($(v))[$(i - 1)] = $val; void();"
+end
+@propagate_inbounds Base.setindex!{T}(v::StdVector{T}, val::T, i) = _std_setindex!(v, val, i)
+@propagate_inbounds Base.setindex!{T}(v::StdVector{T}, val::Cxx.CppValue{T}, i) = _std_setindex!(v, val, i)
+
+
+Base.unsafe_wrap{T}(::Type{Array}, v::StdVector{T}) = WrappedCppObjArray(pointer(v), length(v))
 Base.unsafe_wrap{T<:Cxx.CxxBuiltinTs}(::Type{Array}, v::StdVector{T}) = unsafe_wrap(Array, pointer(v), length(v), false)
 
 # Generic copy from iterable collection to StdVector. Reverse direction is
@@ -114,9 +134,13 @@ Base.copy!(dest, src::StdVector) = copy!(dest, unsafe_wrap(Array, src))
 Base.copy!(dest::StdVector, doffs::Integer, src, soffs::Integer, n::Integer) =
     copy!(unsafe_wrap(Array, dest), doffs + 1, src, soffs, n)
 
+Base.copy!(dest, doffs::Integer, src::StdVector, soffs::Integer, n::Integer) =
+    copy!(unsafe_wrap(Array, dest), doffs + 1, src, soffs, n)
+
 Base.copy!(dest::StdVector, doffs::Integer, src, soffs::Integer, n::Integer) =
     copy!(unsafe_wrap(Array, dest), doffs + 1, src, soffs, n)
 
+=#
 
 function _check_copy_len(dest, doffs::Integer, src, soffs::Integer, n::Integer)
     n > 0 || throw(ArgumentError(string("tried to copy n=", n, " elements, but n should be nonnegative")))
