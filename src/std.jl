@@ -50,13 +50,13 @@ end
 @inline Base.getindex(v::StdVector,i) = (@boundscheck checkbounds(v, i); icxx"($(v))[$i];")
 @inline Base.getindex{T<:Cxx.CxxBuiltinTs}(v::StdVector{T}, i) = (@boundscheck checkbounds(v, i); icxx"auto x = ($(v))[$i]; x;")
 
-@inline function _std_setindex!(v::StdVector, val, i)
+@inline function _generic_setindex!(v::StdVector, val, i::Integer)
     @boundscheck checkbounds(v, i)
     icxx"($(v))[$i] = $val; void();"
 end
-@propagate_inbounds Base.setindex!{T}(v::StdVector{T}, val::T, i) = _std_setindex!(v, val, i)
-@propagate_inbounds Base.setindex!{T}(v::StdVector{T}, val::Cxx.CppValue{T}, i) = _std_setindex!(v, val, i)
-@propagate_inbounds Base.setindex!{T}(v::StdVector{T}, val, i) = _std_setindex!(v, convert(T, val), i)
+@propagate_inbounds Base.setindex!{T}(v::StdVector{T}, val::T, i) = _generic_setindex!(v, val, i)
+@propagate_inbounds Base.setindex!{T}(v::StdVector{T}, val::Cxx.CppValue{T}, i) = _generic_setindex!(v, val, i)
+@propagate_inbounds Base.setindex!{T}(v::StdVector{T}, val, i) = _generic_setindex!(v, convert(T, val), i)
 
 Base.deleteat!(v::StdVector,idxs::UnitRange) =
     icxx"$(v).erase($(v).begin()+$(first(idxs)),$(v).begin()+$(last(idxs)));"
@@ -73,9 +73,6 @@ Base.done(map::StdMap,i) = icxx"$i == $map.end();"
 Base.length(map::StdMap) = icxx"$map.size();"
 Base.eltype{K,V}(::Type{StdMap{K,V}}) = Pair{K,V}
 
-Base.pointer(v::StdVector, i::Integer) = icxx"&$v[$i];"
-Base.pointer(v::StdVector) = pointer(v, 0)
-
 function Base.filter!(f, a::StdVector)
     insrt = start(a)
     for curr = start(a):length(a)
@@ -90,10 +87,26 @@ function Base.filter!(f, a::StdVector)
     return a
 end
 
-#=
+
+Base.pointer(v::StdVector, i::Integer) = icxx"&$v[$i];"
+Base.pointer(v::StdVector) = pointer(v, 0)
+
+Base.unsafe_wrap{T}(::Type{DenseArray}, v::StdVector{T}) = WrappedCppObjArray(pointer(v), length(v))
+Base.unsafe_wrap{T<:Cxx.CxxBuiltinTs}(::Type{DenseArray}, v::StdVector{T}) = WrappedCppPrimArray(pointer(v), length(v))
+
+Base.copy!(dest::StdVector, src) = copy!(unsafe_wrap(DenseArray, dest), src)
+Base.copy!(dest::AbstractArray, src::StdVector) = copy!(dest, unsafe_wrap(DenseArray, src))
+# Base.copy!(dest::StdVector, src::StdVector) = ...
+
+Base.copy!(dest::StdVector, doffs::Integer, src, soffs::Integer, n::Integer) =
+    copy!(unsafe_wrap(DenseArray, dest), doffs + 1, src, soffs, n)
+Base.copy!(dest::AbstractArray, doffs::Integer, src::StdVector, soffs::Integer, n::Integer) =
+    copy!(dest, doffs + 1, unsafe_wrap(DenseArray, src), soffs, n)
+# Base.copy!(dest::StdVector, doffs::Integer, src::StdVector, soffs::Integer, n::Integer) = ...
+
 
 immutable WrappedCppObjArray{T, CVR} <: DenseArray{T,1}
-    ptr::CppPtr{T,CVR}
+    ptr::Cxx.CppPtr{T,CVR}
     len::Int
 end
 
@@ -104,73 +117,53 @@ end
 
 typealias WrappedArray{T} Union{WrappedCppObjArray{T}, WrappedCppPrimArray{T}}
 
-Base.unsafe_wrap{T}(::Type{DenseArray}, v::StdVector{T}) = WrappedCppObjArray(pointer(v), length(v))
-Base.unsafe_wrap{T<:Cxx.CxxBuiltinTs}(::Type{DenseArray}, v::StdVector{T}) = WrappedCppPrimArray(pointer(v), length(v))
-Base.unsafe_wrap{T<:Cxx.CxxBuiltinTs}(::Type{Array}, v::StdVector{T}) = unsafe_wrap(Array, pointer(v), length(v), false)
+Base.length(A::WrappedArray) = A.len
+Base.size(A::WrappedArray) = (A.len,)
+Base.linearindexing(::WrappedArray) = Base.LinearFast()
 
-@inline Base.length(A::WrappedArray) = length(A.len)
-@inline Base.size(A::WrappedArray) = (A.len,)
-@inline Base.linearindexing(::WrappedArray) = Base.LinearFast()
+Base.pointer(A::WrappedArray) = A.ptr
+Base.pointer{T}(A::WrappedCppPrimArray{T}, i::Integer) = A.ptr + sizeof(T) * (i - 1)
+Base.pointer{T}(A::WrappedCppObjArray{T}, i::Integer) = icxx"&$(A.ptr)[$(i - 1)];"
 
-@inline Base.getindex(A::WrappedCppObjArray,i) = (@boundscheck checkbounds(v, i); icxx"($(A.ptr))[$(i - 1)];")
+@inline Base.getindex(A::WrappedCppObjArray, i::Integer) =
+    (@boundscheck checkbounds(A, i); icxx"($(A.ptr))[$(i - 1)];")
 
-@inline function _std_setindex!(v::{StdVector, val, i)
-    @boundscheck checkbounds(v, i)
-    icxx"($(v))[$(i - 1)] = $val; void();"
-end
-@propagate_inbounds Base.setindex!{T}(v::StdVector{T}, val::T, i) = _std_setindex!(v, val, i)
-@propagate_inbounds Base.setindex!{T}(v::StdVector{T}, val::Cxx.CppValue{T}, i) = _std_setindex!(v, val, i)
+@inline Base.getindex(A::WrappedCppPrimArray, i::Integer) =
+    (@boundscheck checkbounds(A, i); unsafe_load(A.ptr, i))
+
+@inline _generic_setindex!(A::WrappedCppObjArray, val, i::Integer) =
+    (@boundscheck checkbounds(A, i); icxx"($(A.ptr))[$(i - 1)] = $val; void();")
+
+@inline _generic_setindex!(A::WrappedCppPrimArray, val, i::Integer) =
+    (@boundscheck checkbounds(A, i); unsafe_store!(A.ptr, val, i) )
+
+@propagate_inbounds Base.setindex!(A::WrappedCppObjArray, val::Union{Cxx.CppValue, Cxx.CppRef}, i::Integer) = _generic_setindex!(A, val, i)
+@propagate_inbounds Base.setindex!{T<:Cxx.CxxBuiltinTs}(A::WrappedCppPrimArray{T}, val::T, i::Integer) = _generic_setindex!(A, val, i)
+@propagate_inbounds Base.setindex!{T}(A::WrappedArray{T}, val, i::Integer) = _generic_setindex!(A, convert(T, val), i)
 
 
-Base.unsafe_wrap{T}(::Type{Array}, v::StdVector{T}) = WrappedCppObjArray(pointer(v), length(v))
-Base.unsafe_wrap{T<:Cxx.CxxBuiltinTs}(::Type{Array}, v::StdVector{T}) = unsafe_wrap(Array, pointer(v), length(v), false)
-
-# Generic copy from iterable collection to StdVector. Reverse direction is
-# already covered by Julia's default copy!(dest::AbstractArray, src).
-Base.copy!(dest::StdVector, src) = copy!(unsafe_wrap(Array, dest), src)
-Base.copy!(dest, src::StdVector) = copy!(dest, unsafe_wrap(Array, src))
-# Base.copy!(dest::StdVector, src::StdVector) = ...
-
-Base.copy!(dest::StdVector, doffs::Integer, src, soffs::Integer, n::Integer) =
-    copy!(unsafe_wrap(Array, dest), doffs + 1, src, soffs, n)
-
-Base.copy!(dest, doffs::Integer, src::StdVector, soffs::Integer, n::Integer) =
-    copy!(unsafe_wrap(Array, dest), doffs + 1, src, soffs, n)
-
-Base.copy!(dest::StdVector, doffs::Integer, src, soffs::Integer, n::Integer) =
-    copy!(unsafe_wrap(Array, dest), doffs + 1, src, soffs, n)
-
-=#
-
-function _check_copy_len(dest, doffs::Integer, src, soffs::Integer, n::Integer)
-    n > 0 || throw(ArgumentError(string("tried to copy n=", n, " elements, but n should be nonnegative")))
-    dest_linidx = linearindices(dest)
-    src_linidx = linearindices(src)
-    (
-        soffs < first(src_linidx) || doffs < first(dest_linidx) ||
-            soffs + n - 1 > last(src_linidx) || doffs + n - 1 > last(dest_linidx)
-    ) && throw(BoundsError())
-    nothing
-end
-
+# Basically a clone of
+#     Base.copy!{T}(dest::Array{T}, doffs::Integer, src::Array{T}, soffs::Integer, n::Integer)
 function _dense_unsafe_copy!(dest, doffs::Integer, src, soffs::Integer, n::Integer)
     n == 0 && return dest
-    _check_copy_len(dest, doffs, src, soffs, n)
+    n > 0 || throw(ArgumentError(string("tried to copy n=", n, " elements, but n should be nonnegative")))
+    if soffs < 1 || doffs < 1 || soffs+n-1 > length(src) || doffs+n-1 > length(dest)
+        throw(BoundsError())
+    end
     unsafe_copy!(pointer(dest, doffs), pointer(src, soffs), n)
-    dest
 end
 
-Base.copy!{T<:Cxx.CxxBuiltinTs,N}(dest::DenseArray{T,N}, doffs::Integer, src::StdVector{T}, soffs::Integer, n::Integer) =
+Base.copy!{T<:Cxx.CxxBuiltinTs,N}(dest::DenseArray{T,N}, doffs::Integer, src::WrappedCppPrimArray{T}, soffs::Integer, n::Integer) =
     _dense_unsafe_copy!(dest, doffs, src, soffs, n)
 
-Base.copy!{T<:Cxx.CxxBuiltinTs,N}(dest::StdVector{T}, doffs::Integer, src::DenseArray{T,N}, soffs::Integer, n::Integer) =
+Base.copy!{T<:Cxx.CxxBuiltinTs,N}(dest::WrappedCppPrimArray{T}, doffs::Integer, src::DenseArray{T,N}, soffs::Integer, n::Integer) =
     _dense_unsafe_copy!(dest, doffs, src, soffs, n)
 
-Base.copy!{T<:Cxx.CxxBuiltinTs,N}(dest::DenseArray{T,N}, src::StdVector{T}) =
-    _dense_unsafe_copy!(dest, first(linearindices(dest)), src, 0, length(src))
+Base.copy!{T<:Cxx.CxxBuiltinTs,N}(dest::DenseArray{T,N}, src::WrappedCppPrimArray{T}) =
+    _dense_unsafe_copy!(dest, first(linearindices(dest)), src, 1, length(src))
 
-Base.copy!{T<:Cxx.CxxBuiltinTs,N}(dest::StdVector{T}, src::DenseArray{T,N}) =
-    _dense_unsafe_copy!(dest, 0, src, first(linearindices(src)), length(src))
+Base.copy!{T<:Cxx.CxxBuiltinTs,N}(dest::WrappedCppPrimArray{T}, src::DenseArray{T,N}) =
+    _dense_unsafe_copy!(dest, 1, src, first(linearindices(src)), length(src))
 
 
 function Base.convert{T}(V::Type{Vector{T}}, x::StdVector)
