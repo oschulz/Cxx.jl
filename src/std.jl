@@ -39,6 +39,8 @@ Base.start(v::StdVector) = 0
 Base.next(v::StdVector,i) = (v[i], i+1)
 Base.done(v::StdVector,i) = i >= length(v)
 Base.length(v::StdVector) = Int(icxx"$(v).size();")
+Base.size(v::StdVector) = (length(v),)
+Base.eltype{T}(v::StdVector{T}) = T
 @inline Base.indices(v::StdVector) = (0:(length(v) - 1),)
 @inline Base.linearindices(v::StdVector) = indices(v)[1]
 @inline function Base.checkbounds(v::StdVector, I...)
@@ -49,13 +51,13 @@ end
 @inline Base.getindex(v::StdVector,i) = (@boundscheck checkbounds(v, i); icxx"($(v))[$i];")
 @inline Base.getindex{T<:Cxx.CxxBuiltinTs}(v::StdVector{T}, i) = (@boundscheck checkbounds(v, i); icxx"auto x = ($(v))[$i]; x;")
 
-@inline function _std_setindex!(v::StdVector, val, i)
+@inline function _generic_setindex!(v::StdVector, val, i::Integer)
     @boundscheck checkbounds(v, i)
     icxx"($(v))[$i] = $val; void();"
 end
-@propagate_inbounds Base.setindex!{T}(v::StdVector{T}, val::T, i) = _std_setindex!(v, val, i)
-@propagate_inbounds Base.setindex!{T}(v::StdVector{T}, val::Cxx.CppValue{T}, i) = _std_setindex!(v, val, i)
-@propagate_inbounds Base.setindex!{T}(v::StdVector{T}, val, i) = _std_setindex!(v, convert(T, val), i)
+@propagate_inbounds Base.setindex!{T}(v::StdVector{T}, val::T, i) = _generic_setindex!(v, val, i)
+@propagate_inbounds Base.setindex!{T}(v::StdVector{T}, val::Cxx.CppValue{T}, i) = _generic_setindex!(v, val, i)
+@propagate_inbounds Base.setindex!{T}(v::StdVector{T}, val, i) = _generic_setindex!(v, convert(T, val), i)
 
 Base.deleteat!(v::StdVector,idxs::UnitRange) =
     icxx"$(v).erase($(v).begin()+$(first(idxs)),$(v).begin()+$(last(idxs)));"
@@ -86,62 +88,69 @@ function Base.filter!(f, a::StdVector)
     return a
 end
 
-# Generic copy from iterable collection to StdVector. Reverse direction is
-# already covered by Julia's default copy!(dest::AbstractArray, src).
-function Base.copy!(dest::StdVector, src)
-    destiter = linearindices(dest)
-    state = start(destiter)
-    for x in src
-        i, state = next(destiter, state)
-        dest[i] = x
-    end
-    return dest
-end
 
-function _check_copy_len(dest, doffs, src, soffs, n)
-    n < 0 && throw(ArgumentError(string("tried to copy n=", n, " elements, but n must be >= 0")))
+Base.pointer(v::StdVector, i::Integer) = icxx"&$v[$i];"
+Base.pointer(v::StdVector) = pointer(v, 0)
 
-    dest_linidx = linearindices(dest)
-    src_linidx = linearindices(src)
+Base.unsafe_wrap{T}(::Type{DenseArray}, v::StdVector{T}) = WrappedCppObjArray(pointer(v), length(v))
+Base.unsafe_wrap{T<:Cxx.CxxBuiltinTs}(::Type{DenseArray}, v::StdVector{T}) = WrappedCppPrimArray(pointer(v), length(v))
 
-    (
-        soffs < first(src_linidx) || doffs < first(dest_linidx) ||
-            soffs + n - 1 > last(src_linidx) || doffs + n - 1 > last(dest_linidx)
-    ) && throw(BoundsError())
+Base.copy!(dest::StdVector, src) = copy!(unsafe_wrap(DenseArray, dest), src)
+Base.copy!(dest::AbstractArray, src::StdVector) = copy!(dest, unsafe_wrap(DenseArray, src))
+# Base.copy!(dest::StdVector, src::StdVector) = ...
 
-    n
-end
+Base.copy!(dest::StdVector, doffs::Integer, src, soffs::Integer, n::Integer) =
+    copy!(unsafe_wrap(DenseArray, dest), doffs + 1, src, soffs, n)
+Base.copy!(dest::AbstractArray, doffs::Integer, src::StdVector, soffs::Integer, n::Integer) =
+    copy!(dest, doffs + 1, unsafe_wrap(DenseArray, src), soffs, n)
+# Base.copy!(dest::StdVector, doffs::Integer, src::StdVector, soffs::Integer, n::Integer) = ...
 
-function Base.copy!{T<:Cxx.CxxBuiltinTs}(dest::DenseVector{T}, doffs::Integer, src::StdVector{T}, soffs::Integer, n::Integer)
-    _check_copy_len(dest, doffs, src, soffs, n)
-    unsafe_copy!(pointer(dest, doffs), icxx"&$src[$soffs];", n)
-    dest
-end
+Base.convert{CT<:AbstractArray}(::Type{CT}, v::StdVector) = convert(CT, unsafe_wrap(DenseArray, v))
 
-function Base.copy!{T<:Cxx.CxxBuiltinTs}(dest::StdVector{T}, doffs::Integer, src::DenseVector{T}, soffs::Integer, n::Integer)
-    _check_copy_len(dest, doffs, src, soffs, n)
-    unsafe_copy!(icxx"&$dest[$doffs];", pointer(src, soffs), n)
-    dest
-end
-
-Base.copy!{T<:Cxx.CxxBuiltinTs}(dest::DenseVector{T}, src::StdVector{T}) =
-    copy!(dest, first(linearindices(dest)), src, 0, length(src))
-
-Base.copy!{T<:Cxx.CxxBuiltinTs}(dest::StdVector{T}, src::DenseVector{T}) =
-    copy!(dest, 0, src, first(linearindices(src)), length(src))
-
-function Base.convert{T}(V::Type{Vector{T}}, x::StdVector)
-    result = V(length(x))
-    copy!(result, x)
-    result
-end
-
-function Base.convert{T}(::Type{cxxt"std::vector<$T>"}, x::AbstractVector)
+function Base.convert{T}(::Type{cxxt"std::vector<$T>"}, x::AbstractArray)
     n = length(linearindices(x))
     result = icxx"std::vector<$T> v($n); v;"
     copy!(result, x)
     result
 end
+
+
+immutable WrappedCppObjArray{T, CVR} <: DenseArray{T,1}
+    ptr::Cxx.CppPtr{T,CVR}
+    len::Int
+end
+
+immutable WrappedCppPrimArray{T<:Cxx.CxxBuiltinTs} <: DenseArray{T,1}
+    ptr::Ptr{T}
+    len::Int
+end
+
+typealias WrappedArray{T} Union{WrappedCppObjArray{T}, WrappedCppPrimArray{T}}
+
+Base.length(A::WrappedArray) = A.len
+Base.size(A::WrappedArray) = (A.len,)
+Base.linearindexing(::WrappedArray) = Base.LinearFast()
+
+Base.pointer(A::WrappedArray) = A.ptr
+Base.pointer{T}(A::WrappedCppPrimArray{T}, i::Integer) = A.ptr + sizeof(T) * (i - 1)
+Base.pointer{T}(A::WrappedCppObjArray{T}, i::Integer) = icxx"&$(A.ptr)[$(i - 1)];"
+
+@inline Base.getindex(A::WrappedCppObjArray, i::Integer) =
+    (@boundscheck checkbounds(A, i); icxx"($(A.ptr))[$(i - 1)];")
+
+@inline Base.getindex(A::WrappedCppPrimArray, i::Integer) =
+    (@boundscheck checkbounds(A, i); unsafe_load(A.ptr, i))
+
+@inline _generic_setindex!(A::WrappedCppObjArray, val, i::Integer) =
+    (@boundscheck checkbounds(A, i); icxx"($(A.ptr))[$(i - 1)] = $val; void();")
+
+@inline _generic_setindex!(A::WrappedCppPrimArray, val, i::Integer) =
+    (@boundscheck checkbounds(A, i); unsafe_store!(A.ptr, val, i) )
+
+@propagate_inbounds Base.setindex!(A::WrappedCppObjArray, val::Union{Cxx.CppValue, Cxx.CppRef}, i::Integer) = _generic_setindex!(A, val, i)
+@propagate_inbounds Base.setindex!{T<:Cxx.CxxBuiltinTs}(A::WrappedCppPrimArray{T}, val::T, i::Integer) = _generic_setindex!(A, val, i)
+@propagate_inbounds Base.setindex!{T}(A::WrappedArray{T}, val, i::Integer) = _generic_setindex!(A, convert(T, val), i)
+
 
 function Base.show{T}(io::IO,
     ptr::Union{cxxt"std::shared_ptr<$T>",cxxt"std::shared_ptr<$T>&"})
