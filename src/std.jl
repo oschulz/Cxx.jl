@@ -98,21 +98,37 @@ function Base.copy!(dest::StdVector, src)
     return dest
 end
 
-function Base.copy!{T<:Cxx.CxxBuiltinTs}(dest::DenseVector{T}, src::StdVector{T})
-    dest_length = length(linearindices(dest))
-    src_length = length(linearindices(src))
-    (dest_length < src_length) && throw(BoundsError())
-    unsafe_copy!(pointer(dest), (@cxx src->data()), src_length)
+function _check_copy_len(dest, doffs, src, soffs, n)
+    n < 0 && throw(ArgumentError(string("tried to copy n=", n, " elements, but n must be >= 0")))
+
+    dest_linidx = linearindices(dest)
+    src_linidx = linearindices(src)
+
+    (
+        soffs < first(src_linidx) || doffs < first(dest_linidx) ||
+            soffs + n - 1 > last(src_linidx) || doffs + n - 1 > last(dest_linidx)
+    ) && throw(BoundsError())
+
+    n
+end
+
+function Base.copy!{T<:Cxx.CxxBuiltinTs}(dest::DenseVector{T}, doffs::Integer, src::StdVector{T}, soffs::Integer, n::Integer)
+    _check_copy_len(dest, doffs, src, soffs, n)
+    unsafe_copy!(pointer(dest, doffs), icxx"&$src[$soffs];", n)
     dest
 end
 
-function Base.copy!{T<:Cxx.CxxBuiltinTs}(dest::StdVector{T}, src::DenseVector{T})
-    dest_length = length(linearindices(dest))
-    src_length = length(linearindices(src))
-    (dest_length < src_length) && throw(BoundsError())
-    unsafe_copy!((@cxx dest->data()), pointer(src), src_length)
+function Base.copy!{T<:Cxx.CxxBuiltinTs}(dest::StdVector{T}, doffs::Integer, src::DenseVector{T}, soffs::Integer, n::Integer)
+    _check_copy_len(dest, doffs, src, soffs, n)
+    unsafe_copy!(icxx"&$dest[$doffs];", pointer(src, soffs), n)
     dest
 end
+
+Base.copy!{T<:Cxx.CxxBuiltinTs}(dest::DenseVector{T}, src::StdVector{T}) =
+    copy!(dest, first(linearindices(dest)), src, 0, length(src))
+
+Base.copy!{T<:Cxx.CxxBuiltinTs}(dest::StdVector{T}, src::DenseVector{T}) =
+    copy!(dest, 0, src, first(linearindices(src)), length(src))
 
 function Base.convert{T}(V::Type{Vector{T}}, x::StdVector)
     result = V(length(x))
