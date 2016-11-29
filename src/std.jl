@@ -142,30 +142,6 @@ Base.pointer{T}(A::WrappedCppObjArray{T}, i::Integer) = icxx"&$(A.ptr)[$(i - 1)]
 @propagate_inbounds Base.setindex!{T}(A::WrappedArray{T}, val, i::Integer) = _generic_setindex!(A, convert(T, val), i)
 
 
-# Basically a clone of
-#     Base.copy!{T}(dest::Array{T}, doffs::Integer, src::Array{T}, soffs::Integer, n::Integer)
-function _dense_unsafe_copy!(dest, doffs::Integer, src, soffs::Integer, n::Integer)
-    n == 0 && return dest
-    n > 0 || throw(ArgumentError(string("tried to copy n=", n, " elements, but n should be nonnegative")))
-    if soffs < 1 || doffs < 1 || soffs+n-1 > length(src) || doffs+n-1 > length(dest)
-        throw(BoundsError())
-    end
-    unsafe_copy!(pointer(dest, doffs), pointer(src, soffs), n)
-end
-
-Base.copy!{T<:Cxx.CxxBuiltinTs,N}(dest::DenseArray{T,N}, doffs::Integer, src::WrappedCppPrimArray{T}, soffs::Integer, n::Integer) =
-    _dense_unsafe_copy!(dest, doffs, src, soffs, n)
-
-Base.copy!{T<:Cxx.CxxBuiltinTs,N}(dest::WrappedCppPrimArray{T}, doffs::Integer, src::DenseArray{T,N}, soffs::Integer, n::Integer) =
-    _dense_unsafe_copy!(dest, doffs, src, soffs, n)
-
-Base.copy!{T<:Cxx.CxxBuiltinTs,N}(dest::DenseArray{T,N}, src::WrappedCppPrimArray{T}) =
-    _dense_unsafe_copy!(dest, first(linearindices(dest)), src, 1, length(src))
-
-Base.copy!{T<:Cxx.CxxBuiltinTs,N}(dest::WrappedCppPrimArray{T}, src::DenseArray{T,N}) =
-    _dense_unsafe_copy!(dest, 1, src, first(linearindices(src)), length(src))
-
-
 function Base.convert{T}(V::Type{Vector{T}}, x::StdVector)
     result = V(length(x))
     copy!(result, x)
