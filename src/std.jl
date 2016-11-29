@@ -112,22 +112,22 @@ function _check_copy_len(dest, doffs, src, soffs, n)
     n
 end
 
-function Base.copy!{T<:Cxx.CxxBuiltinTs}(dest::DenseVector{T}, doffs::Integer, src::StdVector{T}, soffs::Integer, n::Integer)
+function Base.copy!{T<:Cxx.CxxBuiltinTs,N}(dest::DenseArray{T,N}, doffs::Integer, src::StdVector{T}, soffs::Integer, n::Integer)
     _check_copy_len(dest, doffs, src, soffs, n)
     unsafe_copy!(pointer(dest, doffs), icxx"&$src[$soffs];", n)
     dest
 end
 
-function Base.copy!{T<:Cxx.CxxBuiltinTs}(dest::StdVector{T}, doffs::Integer, src::DenseVector{T}, soffs::Integer, n::Integer)
+function Base.copy!{T<:Cxx.CxxBuiltinTs,N}(dest::StdVector{T}, doffs::Integer, src::DenseArray{T,N}, soffs::Integer, n::Integer)
     _check_copy_len(dest, doffs, src, soffs, n)
     unsafe_copy!(icxx"&$dest[$doffs];", pointer(src, soffs), n)
     dest
 end
 
-Base.copy!{T<:Cxx.CxxBuiltinTs}(dest::DenseVector{T}, src::StdVector{T}) =
+Base.copy!{T<:Cxx.CxxBuiltinTs,N}(dest::DenseArray{T,N}, src::StdVector{T}) =
     copy!(dest, first(linearindices(dest)), src, 0, length(src))
 
-Base.copy!{T<:Cxx.CxxBuiltinTs}(dest::StdVector{T}, src::DenseVector{T}) =
+Base.copy!{T<:Cxx.CxxBuiltinTs,N}(dest::StdVector{T}, src::DenseArray{T,N}) =
     copy!(dest, 0, src, first(linearindices(src)), length(src))
 
 function Base.convert{T}(V::Type{Vector{T}}, x::StdVector)
