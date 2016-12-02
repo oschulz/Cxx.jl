@@ -55,9 +55,9 @@ end
     @boundscheck checkbounds(v, i)
     icxx"($(v))[$i] = $val; void();"
 end
-@propagate_inbounds Base.setindex!{T}(v::StdVector{T}, val::T, i) = _generic_setindex!(v, val, i)
-@propagate_inbounds Base.setindex!{T}(v::StdVector{T}, val::Cxx.CppValue{T}, i) = _generic_setindex!(v, val, i)
-@propagate_inbounds Base.setindex!{T}(v::StdVector{T}, val, i) = _generic_setindex!(v, convert(T, val), i)
+@propagate_inbounds Base.setindex!(v::StdVector, val::Union{Cxx.CppValue, Cxx.CppRef}, i::Integer) = _generic_setindex!(v, val, i)
+@propagate_inbounds Base.setindex!{T}(v::StdVector{T}, val::T, i::Integer) = _generic_setindex!(v, val, i)
+@propagate_inbounds Base.setindex!{T}(v::StdVector{T}, val, i::Integer) = _generic_setindex!(v, convert(T, val), i)
 
 Base.deleteat!(v::StdVector,idxs::UnitRange) =
     icxx"$(v).erase($(v).begin()+$(first(idxs)),$(v).begin()+$(last(idxs)));"
@@ -89,8 +89,8 @@ function Base.filter!(f, a::StdVector)
 end
 
 
-Base.pointer(v::StdVector, i::Integer) = icxx"&$v[$i];"
 Base.pointer(v::StdVector) = pointer(v, 0)
+Base.pointer(v::StdVector, i::Integer) = icxx"&$v[$i];"
 
 Base.unsafe_wrap{T}(::Type{DenseArray}, v::StdVector{T}) = WrappedCppObjArray(pointer(v), length(v))
 Base.unsafe_wrap{T<:Cxx.CxxBuiltinTs}(::Type{DenseArray}, v::StdVector{T}) = WrappedCppPrimArray(pointer(v), length(v))
@@ -102,7 +102,7 @@ Base.copy!(dest::AbstractArray, src::StdVector) = copy!(dest, unsafe_wrap(DenseA
 Base.copy!(dest::StdVector, doffs::Integer, src, soffs::Integer, n::Integer) =
     copy!(unsafe_wrap(DenseArray, dest), doffs + 1, src, soffs, n)
 Base.copy!(dest::AbstractArray, doffs::Integer, src::StdVector, soffs::Integer, n::Integer) =
-    copy!(dest, doffs + 1, unsafe_wrap(DenseArray, src), soffs, n)
+    copy!(dest, doffs, unsafe_wrap(DenseArray, src), soffs + 1, n)
 # Base.copy!(dest::StdVector, doffs::Integer, src::StdVector, soffs::Integer, n::Integer) = ...
 
 Base.convert{CT<:AbstractArray}(::Type{CT}, v::StdVector) = convert(CT, unsafe_wrap(DenseArray, v))
