@@ -1,4 +1,5 @@
 import Base: String, unsafe_string
+using Base.@propagate_inbounds
 
 cxxparse("""
 #include <string>
@@ -34,14 +35,34 @@ end
     end
 end
 
-Base.start(it::StdVector) = 0
-Base.next(it::StdVector,i) = (it[i], i+1)
-Base.done(it::StdVector,i) = i >= length(it)
-Base.getindex(it::StdVector,i) = icxx"($(it))[$i];"
-Base.length(it::StdVector) = icxx"$(it).size();"
+Base.start(v::StdVector) = 0
+Base.next(v::StdVector,i) = (v[i], i+1)
+Base.done(v::StdVector,i) = i >= length(v)
+Base.length(v::StdVector) = Int(icxx"$(v).size();")
+Base.size(v::StdVector) = (length(v),)
+Base.eltype{T}(v::StdVector{T}) = T
+@inline Base.indices(v::StdVector) = (0:(length(v) - 1),)
+@inline Base.linearindices(v::StdVector) = indices(v)[1]
+@inline function Base.checkbounds(v::StdVector, I...)
+    Base.checkbounds_indices(Bool, indices(v), I) || Base.throw_boundserror(v, I)
+    nothing
+end
+
+@inline Base.getindex(v::StdVector,i) = (@boundscheck checkbounds(v, i); icxx"($(v))[$i];")
+@inline Base.getindex{T<:Cxx.CxxBuiltinTs}(v::StdVector{T}, i) = (@boundscheck checkbounds(v, i); icxx"auto x = ($(v))[$i]; x;")
+
+@inline function _generic_setindex!(v::StdVector, val, i::Integer)
+    @boundscheck checkbounds(v, i)
+    icxx"($(v))[$i] = $val; void();"
+end
+@propagate_inbounds Base.setindex!(v::StdVector, val::Union{Cxx.CppValue, Cxx.CppRef}, i::Integer) = _generic_setindex!(v, val, i)
+@propagate_inbounds Base.setindex!{T}(v::StdVector{T}, val::T, i::Integer) = _generic_setindex!(v, val, i)
+@propagate_inbounds Base.setindex!{T}(v::StdVector{T}, val, i::Integer) = _generic_setindex!(v, convert(T, val), i)
+
 Base.deleteat!(v::StdVector,idxs::UnitRange) =
     icxx"$(v).erase($(v).begin()+$(first(idxs)),$(v).begin()+$(last(idxs)));"
 Base.push!(v::StdVector,i) = icxx"$v.push_back($i);"
+Base.resize!(v::StdVector, n) = icxx"$v.resize($n);"
 
 Base.start(map::StdMap) = icxx"$map.begin();"
 function Base.next(map::StdMap,i)
@@ -52,6 +73,9 @@ end
 Base.done(map::StdMap,i) = icxx"$i == $map.end();"
 Base.length(map::StdMap) = icxx"$map.size();"
 Base.eltype{K,V}(::Type{StdMap{K,V}}) = Pair{K,V}
+
+Base.pointer(v::StdVector) = pointer(v, 0)
+Base.pointer(v::StdVector, i::Integer) = icxx"&$v[$i];"
 
 function Base.filter!(f, a::StdVector)
     insrt = start(a)
