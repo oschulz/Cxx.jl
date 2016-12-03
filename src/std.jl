@@ -91,6 +91,66 @@ function Base.filter!(f, a::StdVector)
     return a
 end
 
+Base.unsafe_wrap{T}(::Type{DenseArray}, v::StdVector{T}) = WrappedCppObjArray(pointer(v), length(v))
+Base.unsafe_wrap{T<:Cxx.CxxBuiltinTs}(::Type{DenseArray}, v::StdVector{T}) = WrappedCppPrimArray(pointer(v), length(v))
+
+Base.copy!(dest::StdVector, src) = copy!(unsafe_wrap(DenseArray, dest), src)
+Base.copy!(dest::AbstractArray, src::StdVector) = copy!(dest, unsafe_wrap(DenseArray, src))
+# Base.copy!(dest::StdVector, src::StdVector) = ...
+
+Base.copy!(dest::StdVector, doffs::Integer, src, soffs::Integer, n::Integer) =
+    copy!(unsafe_wrap(DenseArray, dest), doffs + 1, src, soffs, n)
+Base.copy!(dest::AbstractArray, doffs::Integer, src::StdVector, soffs::Integer, n::Integer) =
+    copy!(dest, doffs, unsafe_wrap(DenseArray, src), soffs + 1, n)
+# Base.copy!(dest::StdVector, doffs::Integer, src::StdVector, soffs::Integer, n::Integer) = ...
+
+Base.convert{CT<:AbstractArray}(::Type{CT}, v::StdVector) = convert(CT, unsafe_wrap(DenseArray, v))
+
+function Base.convert{T}(::Type{cxxt"std::vector<$T>"}, x::AbstractArray)
+    n = length(linearindices(x))
+    result = icxx"std::vector<$T> v($n); v;"
+    copy!(result, x)
+    result
+end
+
+
+immutable WrappedCppObjArray{T, CVR} <: DenseArray{T,1}
+    ptr::Cxx.CppPtr{T,CVR}
+    len::Int
+end
+
+immutable WrappedCppPrimArray{T<:Cxx.CxxBuiltinTs} <: DenseArray{T,1}
+    ptr::Ptr{T}
+    len::Int
+end
+
+typealias WrappedArray{T} Union{WrappedCppObjArray{T}, WrappedCppPrimArray{T}}
+
+Base.length(A::WrappedArray) = A.len
+Base.size(A::WrappedArray) = (A.len,)
+Base.linearindexing(::WrappedArray) = Base.LinearFast()
+
+Base.pointer(A::WrappedArray) = A.ptr
+Base.pointer{T}(A::WrappedCppPrimArray{T}, i::Integer) = A.ptr + sizeof(T) * (i - 1)
+Base.pointer{T}(A::WrappedCppObjArray{T}, i::Integer) = icxx"&$(A.ptr)[$(i - 1)];"
+
+@inline Base.getindex(A::WrappedCppObjArray, i::Integer) =
+    (@boundscheck checkbounds(A, i); icxx"($(A.ptr))[$(i - 1)];")
+
+@inline Base.getindex(A::WrappedCppPrimArray, i::Integer) =
+    (@boundscheck checkbounds(A, i); unsafe_load(A.ptr, i))
+
+@inline _generic_setindex!(A::WrappedCppObjArray, val, i::Integer) =
+    (@boundscheck checkbounds(A, i); icxx"($(A.ptr))[$(i - 1)] = $val; void();")
+
+@inline _generic_setindex!(A::WrappedCppPrimArray, val, i::Integer) =
+    (@boundscheck checkbounds(A, i); unsafe_store!(A.ptr, val, i) )
+
+@propagate_inbounds Base.setindex!(A::WrappedCppObjArray, val::Union{Cxx.CppValue, Cxx.CppRef}, i::Integer) = _generic_setindex!(A, val, i)
+@propagate_inbounds Base.setindex!{T<:Cxx.CxxBuiltinTs}(A::WrappedCppPrimArray{T}, val::T, i::Integer) = _generic_setindex!(A, val, i)
+@propagate_inbounds Base.setindex!{T}(A::WrappedArray{T}, val, i::Integer) = _generic_setindex!(A, convert(T, val), i)
+
+
 function Base.show{T}(io::IO,
     ptr::Union{cxxt"std::shared_ptr<$T>",cxxt"std::shared_ptr<$T>&"})
     println(io,"shared_ptr<",typename(T),"> @",convert(UInt,icxx"(void*)$ptr.get();"))
